@@ -1,0 +1,683 @@
+
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GLIMTECH VR 2.0 | Laboratório de Refrigeração</title>
+
+<style>
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background: #101827;
+  color: white;
+  font-family: Arial, sans-serif;
+}
+
+canvas { display: block; }
+
+#painel {
+  position: fixed;
+  z-index: 5;
+  top: 12px;
+  left: 12px;
+  width: min(370px, calc(100vw - 24px));
+  max-height: calc(100vh - 90px);
+  overflow-y: auto;
+  padding: 15px;
+  border-radius: 14px;
+  background: rgba(13, 24, 42, .94);
+  border: 1px solid #475569;
+}
+
+h1 {
+  margin: 0 0 5px;
+  font-size: 22px;
+  color: #67e8f9;
+}
+
+h2 {
+  font-size: 17px;
+  margin: 12px 0 5px;
+  color: #67e8f9;
+}
+
+p {
+  font-size: 13px;
+  line-height: 1.45;
+  margin: 8px 0;
+}
+
+button {
+  border: 0;
+  border-radius: 7px;
+  padding: 9px 10px;
+  margin: 3px 2px;
+  background: #087e9b;
+  color: white;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+button:hover { background: #0891b2; }
+
+button:active { transform: scale(.97); }
+
+#estado { color: #dbeafe; min-height: 55px; }
+
+#instrucoes {
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+#reticulo {
+  position: fixed;
+  z-index: 4;
+  left: 50%;
+  top: 50%;
+  width: 22px;
+  height: 22px;
+  border: 2px solid white;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  box-shadow: 0 0 8px #000;
+}
+
+#reticulo.focado {
+  border-color: #f59e0b;
+  box-shadow: 0 0 12px #f59e0b;
+}
+
+#reticulo.selecionado {
+  border-color: #10b981;
+}
+
+#vr {
+  position: fixed;
+  z-index: 6;
+  bottom: 12px;
+  right: 12px;
+}
+
+@media(max-width:600px) {
+  #painel { width: min(300px, calc(100vw - 24px)); }
+  h1 { font-size: 18px; }
+}
+</style>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+
+<body>
+
+<div id="painel">
+  <h1>⚡ GLIMTECH VR 2.0</h1>
+  <p><strong>LABORATÓRIO VIRTUAL DE REFRIGERAÇÃO</strong></p>
+
+  <button onclick="mostrar('visao')">Visão geral</button>
+  <button onclick="mostrar('compressor')">Compressor</button>
+  <button onclick="mostrar('condensador')">Condensador</button>
+  <button onclick="mostrar('filtro')">Filtro secador</button>
+  <button onclick="mostrar('capilar')">Capilar</button>
+  <button onclick="mostrar('evaporador')">Evaporador</button>
+  <button onclick="alternarFluxo()">Iniciar / Pausar ciclo</button>
+  <button onclick="recentralizar()">Centralizar visão</button>
+
+  <h2 id="titulo">Visão geral da bancada</h2>
+  <p id="estado">
+    Explore a bancada. Aponte a mira para um componente e mantenha o olhar por aproximadamente 1,5 segundo.
+  </p>
+
+  <p id="instrucoes">
+    Computador: use os botões ou a mira central. Celular: movimente o aparelho e use os botões. VR: utilize a mira do headset.
+  </p>
+</div>
+
+<div id="reticulo"></div>
+<div id="vr"></div>
+
+<script type="module">
+import * as THREE from 'three';
+import { VRButton } from 'three/addons/webxr/VRButton.js';
+
+/* =================================
+   CENA PRINCIPAL
+================================= */
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x26364d);
+
+const camera = new THREE.PerspectiveCamera(
+  65, window.innerWidth / window.innerHeight, 0.1, 100
+);
+
+camera.position.set(0, 2.1, 8);
+camera.lookAt(0, 1.3, 0);
+
+const renderer = new THREE.WebGLRenderer({
+  antialias: true,
+  powerPreference: 'high-performance'
+});
+
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.xr.enabled = true;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+document.body.appendChild(renderer.domElement);
+
+/* =================================
+   ILUMINAÇÃO
+================================= */
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x39465a, 2));
+
+const luz = new THREE.DirectionalLight(0xffffff, 2.5);
+luz.position.set(5, 10, 7);
+scene.add(luz);
+
+const luzFrontal = new THREE.PointLight(0x67e8f9, 25, 20);
+luzFrontal.position.set(0, 5, 5);
+scene.add(luzFrontal);
+
+/* =================================
+   MATERIAIS
+================================= */
+
+const material = (cor, metalness = 0.2, roughness = 0.7) =>
+  new THREE.MeshStandardMaterial({
+    color: cor,
+    metalness,
+    roughness
+  });
+
+const madeira = material(0x68452b);
+const preto = material(0x17191d, 0.75, 0.3);
+const metal = material(0x9ba8b5, 0.8, 0.3);
+const cobre = material(0xb87333, 0.8, 0.3);
+const azul = material(0x087bce, 0.6, 0.3);
+const vermelho = material(0xc83225, 0.5, 0.4);
+const amarelo = material(0xe8b923, 0.5, 0.4);
+
+/* =================================
+   PISO E BANCADA
+================================= */
+
+const piso = new THREE.Mesh(
+  new THREE.PlaneGeometry(40, 40),
+  material(0x344154)
+);
+piso.rotation.x = -Math.PI / 2;
+piso.position.y = -0.12;
+scene.add(piso);
+
+const bancada = new THREE.Group();
+
+const tampo = new THREE.Mesh(
+  new THREE.BoxGeometry(9, 0.25, 4),
+  madeira
+);
+tampo.position.y = 1;
+bancada.add(tampo);
+
+for (const x of [-4, 4]) {
+  for (const z of [-1.6, 1.6]) {
+    const perna = new THREE.Mesh(
+      new THREE.BoxGeometry(0.2, 1, 0.2),
+      metal
+    );
+    perna.position.set(x, 0.45, z);
+    bancada.add(perna);
+  }
+}
+
+scene.add(bancada);
+
+/* =================================
+   COMPONENTES SELECIONÁVEIS
+================================= */
+
+const selecionaveis = {};
+const componentes = [];
+
+function registrar(nome, grupo) {
+  grupo.userData.componente = nome;
+  scene.add(grupo);
+  selecionaveis[nome] = grupo;
+  componentes.push(grupo);
+  return grupo;
+}
+
+/* =================================
+   COMPRESSOR
+================================= */
+
+const compressor = new THREE.Group();
+
+const corpoComp = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.48, 0.48, 0.9, 40),
+  preto
+);
+corpoComp.position.y = 0.55;
+compressor.add(corpoComp);
+
+const topoComp = new THREE.Mesh(
+  new THREE.SphereGeometry(0.48, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2),
+  preto
+);
+topoComp.position.y = 1;
+compressor.add(topoComp);
+
+const baseComp = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.52, 0.52, 0.12, 32),
+  metal
+);
+baseComp.position.y = 0.08;
+compressor.add(baseComp);
+
+compressor.position.set(-3.1, 1.12, 0.2);
+registrar('compressor', compressor);
+
+/* =================================
+   CONDENSADOR VERTICAL
+================================= */
+
+const condensador = new THREE.Group();
+
+const moldura = new THREE.Mesh(
+  new THREE.BoxGeometry(2.1, 2.7, 0.13),
+  preto
+);
+condensador.add(moldura);
+
+for (let i = 0; i < 13; i++) {
+  const aleta = new THREE.Mesh(
+    new THREE.BoxGeometry(1.95, 0.035, 0.08),
+    metal
+  );
+  aleta.position.y = -1.25 + i * 0.2;
+  condensador.add(aleta);
+}
+
+const tuboCond = new THREE.Mesh(
+  new THREE.TorusGeometry(0.85, 0.045, 12, 80, Math.PI * 7),
+  cobre
+);
+tuboCond.rotation.x = Math.PI / 2;
+tuboCond.position.z = 0.12;
+condensador.add(tuboCond);
+
+condensador.position.set(0, 2.55, -1.35);
+registrar('condensador', condensador);
+
+/* =================================
+   FILTRO SECADOR AMARELO
+================================= */
+
+const filtro = new THREE.Group();
+
+const corpoFiltro = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.14, 0.14, 0.85, 32),
+  amarelo
+);
+filtro.add(corpoFiltro);
+
+for (const y of [-0.43, 0.43]) {
+  const conexao = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.055, 0.055, 0.16, 20),
+    cobre
+  );
+  conexao.position.y = y;
+  filtro.add(conexao);
+}
+
+filtro.position.set(1.65, 1.8, -0.7);
+filtro.rotation.z = Math.PI / 2;
+registrar('filtro', filtro);
+
+/* =================================
+   TUBO CAPILAR
+================================= */
+
+const capilar = new THREE.Group();
+
+const pontosCapilar = [];
+for (let i = 0; i <= 40; i++) {
+  const x = -0.9 + i * 0.045;
+  const y = Math.sin(i * 0.55) * 0.08;
+  pontosCapilar.push(new THREE.Vector3(x, y, 0));
+}
+
+const curvaCapilar = new THREE.CatmullRomCurve3(pontosCapilar);
+
+const tuboCapilar = new THREE.Mesh(
+  new THREE.TubeGeometry(curvaCapilar, 80, 0.025, 8, false),
+  cobre
+);
+capilar.add(tuboCapilar);
+
+capilar.position.set(2.1, 1.5, 0.1);
+registrar('capilar', capilar);
+
+/* =================================
+   EVAPORADOR INFERIOR
+================================= */
+
+const evaporador = new THREE.Group();
+
+const suporteEvap = new THREE.Mesh(
+  new THREE.BoxGeometry(2.8, 0.13, 1.1),
+  metal
+);
+evaporador.add(suporteEvap);
+
+const pontosEvap = [];
+
+for (let i = 0; i <= 120; i++) {
+  const x = -1.15 + (i / 120) * 2.3;
+  const y = Math.sin(i * Math.PI / 10) * 0.27;
+  pontosEvap.push(new THREE.Vector3(x, y, 0.12));
+}
+
+const serpentina = new THREE.Mesh(
+  new THREE.TubeGeometry(
+    new THREE.CatmullRomCurve3(pontosEvap),
+    300,
+    0.055,
+    12,
+    false
+  ),
+  azul
+);
+evaporador.add(serpentina);
+
+evaporador.position.set(0.7, 1.28, 1.1);
+registrar('evaporador', evaporador);
+
+/* =================================
+   IDENTIFICAÇÃO VISUAL
+================================= */
+
+const textos = {
+  visao: {
+    titulo: 'Visão geral da bancada',
+    texto: 'Explore os componentes do sistema didático de refrigeração. Selecione cada peça para conhecer sua função.'
+  },
+  compressor: {
+    titulo: '1. Compressor hermético',
+    texto: 'Comprime o vapor refrigerante e promove sua circulação pelo circuito. A pressão e a temperatura do vapor aumentam durante a compressão.'
+  },
+  condensador: {
+    titulo: '2. Condensador',
+    texto: 'Recebe o refrigerante em alta pressão e rejeita calor para o ambiente. O vapor perde calor e passa pelo processo de condensação.'
+  },
+  filtro: {
+    titulo: '3. Filtro secador',
+    texto: 'Retém partículas e auxilia na remoção de umidade do circuito frigorífico. A conexão superior será ajustada conforme a bancada real.'
+  },
+  capilar: {
+    titulo: '4. Tubo capilar',
+    texto: 'Dispositivo de expansão que restringe a passagem do refrigerante, provocando queda de pressão antes da entrada no evaporador.'
+  },
+  evaporador: {
+    titulo: '5. Evaporador',
+    texto: 'Recebe o refrigerante em baixa pressão. O fluido absorve calor do meio refrigerado e evapora durante o funcionamento.'
+  }
+};
+
+function mostrar(nome) {
+  const d = textos[nome] || textos.visao;
+
+  document.getElementById('titulo').textContent = d.titulo;
+  document.getElementById('estado').textContent = d.texto;
+
+  objetoSelecionado = nome;
+  atualizarPainel3D();
+}
+
+window.mostrar = mostrar;
+
+/* =================================
+   PAINEL DE INFORMAÇÃO 3D
+================================= */
+
+const canvasInfo = document.createElement('canvas');
+canvasInfo.width = 1024;
+canvasInfo.height = 300;
+
+const ctx = canvasInfo.getContext('2d');
+
+const texturaInfo = new THREE.CanvasTexture(canvasInfo);
+
+const painel3D = new THREE.Mesh(
+  new THREE.PlaneGeometry(4.6, 1.35),
+  new THREE.MeshBasicMaterial({
+    map: texturaInfo,
+    transparent: true,
+    side: THREE.DoubleSide
+  })
+);
+
+painel3D.position.set(0, 4.5, 0);
+scene.add(painel3D);
+
+let objetoSelecionado = 'visao';
+
+function atualizarPainel3D() {
+  const d = textos[objetoSelecionado] || textos.visao;
+
+  ctx.clearRect(0, 0, 1024, 300);
+
+  ctx.fillStyle = '#0d182a';
+  ctx.fillRect(0, 0, 1024, 300);
+
+  ctx.fillStyle = '#67e8f9';
+  ctx.font = 'bold 42px Arial';
+  ctx.fillText(d.titulo, 30, 75);
+
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '27px Arial';
+
+  const palavras = d.texto.split(' ');
+  let linha = '';
+  let y = 135;
+
+  for (const palavra of palavras) {
+    const teste = linha + palavra + ' ';
+
+    if (ctx.measureText(teste).width > 950) {
+      ctx.fillText(linha, 30, y);
+      linha = palavra + ' ';
+      y += 42;
+    } else {
+      linha = teste;
+    }
+  }
+
+  ctx.fillText(linha, 30, y);
+  texturaInfo.needsUpdate = true;
+}
+
+atualizarPainel3D();
+
+/* =================================
+   FLUXO DIDÁTICO DO REFRIGERANTE
+================================= */
+
+// Percurso visual ilustrativo.
+// A rota definitiva será ajustada após validar
+// todas as conexões da bancada física.
+
+const rota = new THREE.CatmullRomCurve3([
+  new THREE.Vector3(-3.1, 2.3, 0.2),
+  new THREE.Vector3(-2.1, 3.3, -1),
+  new THREE.Vector3(0, 3.8, -1.2),
+  new THREE.Vector3(1.5, 2.1, -0.7),
+  new THREE.Vector3(2.1, 1.5, 0.1),
+  new THREE.Vector3(0.7, 1.35, 1.1),
+  new THREE.Vector3(-1.5, 1.7, 0.5),
+  new THREE.Vector3(-3.1, 2.3, 0.2)
+]);
+
+const particulas = [];
+
+for (let i = 0; i < 12; i++) {
+  const esfera = new THREE.Mesh(
+    new THREE.SphereGeometry(0.065, 16, 16),
+    material(0x22e6ff, 0.2, 0.2)
+  );
+
+  scene.add(esfera);
+
+  particulas.push({
+    mesh: esfera,
+    progresso: i / 12
+  });
+}
+
+let fluxoAtivo = true;
+
+window.alternarFluxo = () => {
+  fluxoAtivo = !fluxoAtivo;
+
+  document.getElementById('estado').textContent =
+    fluxoAtivo
+      ? 'Fluxo didático ativado. As partículas representam o percurso ilustrativo do refrigerante.'
+      : 'Fluxo didático pausado.';
+};
+
+function animarFluxo(delta) {
+  for (const p of particulas) {
+    p.mesh.visible = fluxoAtivo;
+
+    if (fluxoAtivo) {
+      p.progresso = (p.progresso + delta * 0.075) % 1;
+      p.mesh.position.copy(rota.getPointAt(p.progresso));
+    }
+  }
+}
+
+/* =================================
+   MIRA E SELEÇÃO POR OLHAR
+================================= */
+
+const raycaster = new THREE.Raycaster();
+const centro = new THREE.Vector2(0, 0);
+
+const reticulo = document.getElementById('reticulo');
+
+let objetoFocado = null;
+let inicioFoco = 0;
+let ultimoAcionamento = 0;
+
+const TEMPO_FOCO = 1.5;
+
+function verificarMira(tempo) {
+  const origem = new THREE.Vector3();
+  const direcao = new THREE.Vector3();
+
+  camera.getWorldPosition(origem);
+  camera.getWorldDirection(direcao);
+
+  raycaster.set(origem, direcao);
+
+  const intersecoes = raycaster.intersectObjects(componentes, true);
+
+  if (intersecoes.length > 0) {
+    let objeto = intersecoes[0].object;
+
+    while (objeto && !objeto.userData.componente) {
+      objeto = objeto.parent;
+    }
+
+    if (objeto) {
+      reticulo.classList.add('focado');
+
+      if (objeto !== objetoFocado) {
+        objetoFocado = objeto;
+        inicioFoco = tempo;
+      }
+
+      if (
+        tempo - inicioFoco >= TEMPO_FOCO &&
+        tempo - ultimoAcionamento > 2
+      ) {
+        mostrar(objeto.userData.componente);
+        ultimoAcionamento = tempo;
+        inicioFoco = tempo + 10;
+        reticulo.classList.add('selecionado');
+      }
+
+      return;
+    }
+  }
+
+  objetoFocado = null;
+  reticulo.classList.remove('focado');
+  reticulo.classList.remove('selecionado');
+}
+
+/* =================================
+   CENTRALIZAR VISÃO
+================================= */
+
+window.recentralizar = () => {
+  if (renderer.xr.isPresenting) return;
+
+  camera.position.set(0, 2.1, 8);
+  camera.lookAt(0, 1.3, 0);
+};
+
+/* =================================
+   MODO VR
+================================= */
+
+const botaoVR = VRButton.createButton(renderer, {
+  optionalFeatures: ['local-floor']
+});
+
+document.getElementById('vr').appendChild(botaoVR);
+
+/* =================================
+   MOVIMENTO E ANIMAÇÃO
+================================= */
+
+const relogio = new THREE.Clock();
+
+renderer.setAnimationLoop(() => {
+  const delta = Math.min(relogio.getDelta(), 0.05);
+  const tempo = relogio.elapsedTime;
+
+  verificarMira(tempo);
+  animarFluxo(delta);
+
+  painel3D.lookAt(camera.position);
+
+  renderer.render(scene, camera);
+});
+
+/* =================================
+   AJUSTE DE TELA
+================================= */
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+
+</body>
+</html>
